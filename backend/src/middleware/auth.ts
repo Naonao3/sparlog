@@ -35,12 +35,15 @@ export const authMiddleware = createMiddleware<AppEnv>(async (c, next) => {
   }
 
   // alg を明示して alg 混同攻撃を防ぐ。exp / nbf は hono/jwt が検証する。
-  const payload: unknown = await verify(token, env.SUPABASE_JWT_SECRET, {
-    alg: 'HS256',
-    aud: 'authenticated',
-  }).catch(() => {
+  let payload: unknown
+  try {
+    payload = await verify(token, env.SUPABASE_JWT_SECRET, {
+      alg: 'HS256',
+      aud: 'authenticated',
+    })
+  } catch {
     throw unauthorized('トークンが無効または期限切れです')
-  })
+  }
 
   if (!isSupabaseJwtPayload(payload)) {
     throw unauthorized('トークンのペイロードが不正です')

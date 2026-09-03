@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url)
 function readStringPath(value: unknown): string | null {
   if (typeof value === 'string' && value.length > 0) return value
   if (typeof value === 'object' && value !== null && 'path' in value) {
-    const path = (value as { path: unknown }).path
+    const { path } = value
     if (typeof path === 'string' && path.length > 0) return path
   }
   return null

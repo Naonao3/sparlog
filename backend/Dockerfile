@@ -28,10 +28,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-cert
 
 COPY package*.json ./
 COPY prisma ./prisma
-RUN npm ci --omit=dev && npm cache clean --force
+# prisma CLI は dependencies に含めている（migrate deploy をリリース時に実行するため）
+RUN npm ci --omit=dev && npx prisma generate && npm cache clean --force
 
-# 生成済み Prisma Client をビルドステージから持ち込む（prisma CLI は devDependency のため）
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/dist ./dist
 
 # ffmpeg / ffprobe は ffmpeg-static・ffprobe-static のバイナリを使う
