@@ -2,7 +2,7 @@
 
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Pencil } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
 import { z } from 'zod'
@@ -64,16 +64,20 @@ export function VideoEditDialog({ video }: { video: Video }) {
     },
   })
 
-  // ダイアログを開き直したときに最新の値へ戻す
+  // ダイアログを「開いた瞬間」だけ最新の値へ戻す。
+  // video の再取得のたびに reset すると入力中の内容が消えてしまうため。
+  const wasOpenRef = useRef(false)
   useEffect(() => {
-    if (!open) return
-    reset({
-      title: video.title,
-      description: video.description ?? '',
-      recordedAt: toDateTimeLocalValue(video.recordedAt),
-      visibility: video.visibility,
-    })
-    setSelectedTagIds(video.tags.map((tag) => tag.id))
+    if (open && !wasOpenRef.current) {
+      reset({
+        title: video.title,
+        description: video.description ?? '',
+        recordedAt: toDateTimeLocalValue(video.recordedAt),
+        visibility: video.visibility,
+      })
+      setSelectedTagIds(video.tags.map((tag) => tag.id))
+    }
+    wasOpenRef.current = open
   }, [open, video, reset])
 
   async function onSubmit(values: EditFormValues): Promise<void> {

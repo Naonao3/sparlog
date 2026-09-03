@@ -3,7 +3,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
 import { z } from 'zod'
@@ -54,8 +54,12 @@ export function ProfileForm() {
     defaultValues: { displayName: '', avatarUrl: '', bio: '' },
   })
 
+  // 初回にプロフィールが届いたときだけフォームへ流し込む
+  // （再取得のたびに reset すると入力中の内容が消えてしまう）
+  const isInitializedRef = useRef(false)
   useEffect(() => {
-    if (!profile) return
+    if (!profile || isInitializedRef.current) return
+    isInitializedRef.current = true
     reset({
       displayName: profile.displayName ?? '',
       avatarUrl: profile.avatarUrl ?? '',
@@ -65,10 +69,16 @@ export function ProfileForm() {
 
   async function onSubmit(values: ProfileFormValues): Promise<void> {
     try {
-      await updateProfile.mutateAsync({
+      const updated = await updateProfile.mutateAsync({
         displayName: values.displayName,
         avatarUrl: values.avatarUrl.length > 0 ? values.avatarUrl : null,
         bio: values.bio.length > 0 ? values.bio : null,
+      })
+      // 保存後の値を新しい初期値にして isDirty を解除する
+      reset({
+        displayName: updated.displayName ?? '',
+        avatarUrl: updated.avatarUrl ?? '',
+        bio: updated.bio ?? '',
       })
       toast.success('プロフィールを更新しました')
     } catch (error: unknown) {
