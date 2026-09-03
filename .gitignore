@@ -12,7 +12,9 @@ out/
 # env / secrets
 .env
 .env.*
+# 値を含まないサンプルのみ追跡する
 !.env.example
+!.env.local.example
 
 # logs
 *.log
