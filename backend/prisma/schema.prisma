@@ -1,0 +1,155 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum VideoStatus {
+  UPLOADING
+  PROCESSING
+  READY
+  ERROR
+}
+
+enum Visibility {
+  PRIVATE
+  PUBLIC
+}
+
+/// アプリユーザー。id は Supabase Auth の auth.users.id と一致する。
+/// レコードは auth.users への INSERT トリガー（migrations 内の手動SQL）で自動作成される。
+model User {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String   @unique
+  displayName  String?  @map("display_name")
+  avatarUrl    String?  @map("avatar_url")
+  bio          String?
+  authProvider String   @default("email") @map("auth_provider")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  videos            Video[]
+  tags              Tag[]
+  comments          Comment[]
+  timestampComments TimestampComment[]
+
+  @@map("users")
+}
+
+model Video {
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String      @map("user_id") @db.Uuid
+  title        String
+  description  String?
+  storageKey   String      @map("storage_key")
+  thumbnailKey String?     @map("thumbnail_key")
+  mimeType     String?     @map("mime_type")
+  durationSec  Int?        @map("duration_sec")
+  fileSize     BigInt?     @map("file_size")
+  width        Int?
+  height       Int?
+  status       VideoStatus @default(UPLOADING)
+  visibility   Visibility  @default(PRIVATE)
+  errorMessage String?     @map("error_message")
+  recordedAt   DateTime?   @map("recorded_at")
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videoTags         VideoTag[]
+  comments          Comment[]
+  timestampComments TimestampComment[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([visibility])
+  @@index([recordedAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@map("videos")
+}
+
+/// タグのカテゴリ。システム共通（isSystem = true）のみを想定。
+model Category {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug      String   @unique
+  name      String
+  isSystem  Boolean  @default(true) @map("is_system")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tags Tag[]
+
+  @@map("categories")
+}
+
+/// isSystem = true は全ユーザー共通タグ（userId は null）。
+/// isSystem = false はユーザー独自タグ（userId は必須）。
+model Tag {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  categoryId String?  @map("category_id") @db.Uuid
+  userId     String?  @map("user_id") @db.Uuid
+  name       String
+  color      String?
+  isSystem   Boolean  @default(false) @map("is_system")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  category  Category?  @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  user      User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videoTags VideoTag[]
+
+  @@unique([userId, name])
+  @@index([categoryId])
+  @@index([isSystem])
+  @@map("tags")
+}
+
+model VideoTag {
+  videoId   String   @map("video_id") @db.Uuid
+  tagId     String   @map("tag_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  tag   Tag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([videoId, tagId])
+  @@index([tagId])
+  @@map("video_tags")
+}
+
+model Comment {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  videoId   String   @map("video_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  body      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([videoId, createdAt])
+  @@index([userId])
+  @@map("comments")
+}
+
+model TimestampComment {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  videoId   String   @map("video_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  atSec     Int      @map("at_sec")
+  body      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([videoId, atSec])
+  @@index([userId])
+  @@map("timestamp_comments")
+}
