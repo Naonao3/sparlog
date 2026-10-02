@@ -1,5 +1,5 @@
-import { createWriteStream } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { createReadStream, createWriteStream } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import { extname } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -41,6 +41,21 @@ export function buildVideoKey(userId: string, videoId: string, fileName: string,
 
 export function buildThumbnailKey(userId: string, videoId: string): string {
   return `thumbnails/${userId}/${videoId}/thumb.jpg`
+}
+
+export function buildPlaybackKey(userId: string, videoId: string): string {
+  return `videos/${userId}/${videoId}/playback.mp4`
+}
+
+/** 動画に紐づく R2 オブジェクトのキーをすべて返す（削除用） */
+export function collectVideoObjectKeys(video: {
+  storageKey: string
+  playbackKey: string | null
+  thumbnailKey: string | null
+}): string[] {
+  return [video.storageKey, video.playbackKey, video.thumbnailKey].filter(
+    (key): key is string => key !== null,
+  )
 }
 
 /** アップロード用 Presigned URL（PUT）を発行する */
@@ -94,12 +109,14 @@ export async function uploadFile(input: {
   filePath: string
   contentType: string
 }): Promise<void> {
-  const body = await readFile(input.filePath)
+  // 再生用動画は数百MBになりうるため、メモリに載せずストリームで送る（ContentLength が必須）
+  const { size } = await stat(input.filePath)
   await client.send(
     new PutObjectCommand({
       Bucket: BUCKET,
       Key: input.key,
-      Body: body,
+      Body: createReadStream(input.filePath),
+      ContentLength: size,
       ContentType: input.contentType,
     }),
   )

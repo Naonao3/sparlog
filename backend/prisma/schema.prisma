@@ -46,6 +46,8 @@ model Video {
   description  String?
   storageKey   String      @map("storage_key")
   thumbnailKey String?     @map("thumbnail_key")
+  /// 再生用に変換した動画（H.264 / 最大1080p・30fps）。未変換の旧データは null で、元ファイルを再生する
+  playbackKey  String?     @map("playback_key")
   mimeType     String?     @map("mime_type")
   durationSec  Int?        @map("duration_sec")
   fileSize     BigInt?     @map("file_size")

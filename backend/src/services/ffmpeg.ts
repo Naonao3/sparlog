@@ -27,7 +27,13 @@ export interface VideoMetadata {
   durationSec: number | null
   width: number | null
   height: number | null
+  /** HDR（HLG / PQ）で撮影された動画か。iPhone の標準設定では HDR になる */
+  isHdr: boolean
+  hasAudio: boolean
 }
+
+/** HLG（arib-std-b67）と PQ（smpte2084）を HDR とみなす */
+const HDR_TRANSFERS = new Set(['arib-std-b67', 'smpte2084'])
 
 function toFiniteInt(value: unknown): number | null {
   const num = typeof value === 'string' ? Number.parseFloat(value) : value
@@ -50,7 +56,69 @@ export async function probe(filePath: string): Promise<VideoMetadata> {
     durationSec: toFiniteInt(data.format.duration),
     width: toFiniteInt(videoStream?.width),
     height: toFiniteInt(videoStream?.height),
+    isHdr: HDR_TRANSFERS.has(videoStream?.color_transfer ?? ''),
+    hasAudio: data.streams.some((stream) => stream.codec_type === 'audio'),
   }
+}
+
+/** 再生用動画の短辺の上限（px）。縦動画も横動画も 1080p 相当に収める */
+const PLAYBACK_MAX_SHORT_SIDE = 1080
+/** 再生用動画のフレームレート上限 */
+const PLAYBACK_MAX_FPS = 30
+
+/**
+ * 短辺を上限に収める（拡大はしない）。幅・高さは H.264 の都合で偶数にする。
+ * 回転情報（iPhone の縦動画など）は ffmpeg が先に適用するため、iw / ih は回転後の値になる。
+ */
+const SCALE_FILTER =
+  `scale=w='if(gt(iw,ih),-2,min(iw,${PLAYBACK_MAX_SHORT_SIDE}))'` +
+  `:h='if(gt(iw,ih),min(ih,${PLAYBACK_MAX_SHORT_SIDE}),-2)'`
+
+/** HDR を通常の色域（BT.709）に変換する。変換しないと白っぽく色あせて見える */
+const HDR_TO_SDR_FILTERS = [
+  'zscale=t=linear:npl=100',
+  'format=gbrpf32le',
+  'zscale=p=bt709',
+  'tonemap=tonemap=hable:desat=0',
+  'zscale=t=bt709:m=bt709:r=tv',
+]
+
+/**
+ * ブラウザで止まらずに再生できる軽い動画（H.264 / AAC の MP4）を作る。
+ * - 短辺 1080px・30fps・最大 6Mbps 程度に抑える（4K60 の iPhone 動画は 80Mbps を超える）
+ * - faststart で moov を先頭に置き、ダウンロードしながら再生を始められるようにする
+ */
+export async function transcodeForPlayback(input: {
+  sourcePath: string
+  outputPath: string
+  source: VideoMetadata
+}): Promise<void> {
+  const filters = [
+    SCALE_FILTER,
+    ...(input.source.isHdr ? HDR_TO_SDR_FILTERS : []),
+    'format=yuv420p',
+  ]
+
+  await new Promise<void>((resolve, reject) => {
+    const command = ffmpeg(input.sourcePath)
+      .outputOptions([
+        '-map', '0:v:0',
+        ...(input.source.hasAudio ? ['-map', '0:a:0', '-c:a', 'aac', '-b:a', '128k', '-ac', '2'] : []),
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-crf', '23',
+        '-maxrate', '6M',
+        '-bufsize', '12M',
+        '-profile:v', 'high',
+        '-fpsmax', String(PLAYBACK_MAX_FPS),
+        '-movflags', '+faststart',
+      ])
+      .videoFilters(filters)
+      .on('end', () => resolve())
+      .on('error', (err: unknown) => reject(err instanceof Error ? err : new Error(String(err))))
+
+    command.save(input.outputPath)
+  })
 }
 
 /**
