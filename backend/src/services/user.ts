@@ -56,7 +56,7 @@ export async function updateProfile(
 
 /** Supabase Admin API で auth.users を削除する（設定されている場合のみ） */
 async function deleteAuthUser(userId: string): Promise<void> {
-  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return
+  if (!env.SUPABASE_SERVICE_ROLE_KEY) return
 
   const response = await fetch(`${env.SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
     method: 'DELETE',

@@ -9,13 +9,25 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8080),
 
   DATABASE_URL: z.string().url(),
-  SUPABASE_JWT_SECRET: z.string().min(1),
+
+  /**
+   * JWT の issuer 検証と JWKS（ES256 / RS256 の公開鍵）の取得に使う。
+   * 末尾のスラッシュは取り除いて保持する。
+   */
+  SUPABASE_URL: z
+    .string()
+    .url()
+    .transform((value) => value.replace(/\/+$/, '')),
+  /**
+   * Legacy JWT Secret（HS256）。旧方式の共有シークレットで署名しているプロジェクトのみ設定する。
+   * 未設定の場合、HS256 のトークンは拒否する。
+   */
+  SUPABASE_JWT_SECRET: z.string().min(1).optional(),
 
   /**
    * アカウント削除時に auth.users も消すために使う（任意）。
    * 未設定の場合はアプリ側のデータのみ削除する。
    */
-  SUPABASE_URL: z.string().url().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
 
   R2_ACCOUNT_ID: z.string().min(1),
