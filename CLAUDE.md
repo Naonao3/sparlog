@@ -156,7 +156,9 @@ backend/
   ├── supabase.auth.signInWithPassword({ email, password })   # メールログイン
   └── supabase.auth.resetPasswordForEmail(email)              # パスワードリセット
 
-HonoサーバーはSupabase JWT SecretでJWT署名検証のみ行う
+HonoサーバーはJWT署名検証のみ行う
+  ├── ES256 / RS256（JWT Signing Keys）: SUPABASE_URL の JWKS で検証（src/lib/jwks.ts でキャッシュ）
+  ├── HS256（Legacy JWT Secret）: SUPABASE_JWT_SECRET 設定時のみ受け付ける
   └── payload.sub = Supabase の user.id（uuid）
 ```
 
@@ -164,20 +166,10 @@ HonoサーバーはSupabase JWT SecretでJWT署名検証のみ行う
 
 ### JWT検証ミドルウェアの実装方針
 
-```typescript
-// src/middleware/auth.ts
-import { createMiddleware } from 'hono/factory'
-import { verify } from 'hono/jwt'
-
-export const authMiddleware = createMiddleware(async (c, next) => {
-  const token = c.req.header('Authorization')?.replace('Bearer ', '')
-  if (!token) return c.json({ error: { code: 'UNAUTHORIZED', message: 'Missing token' } }, 401)
-
-  const payload = await verify(token, process.env.SUPABASE_JWT_SECRET!)
-  c.set('userId', payload.sub as string)
-  await next()
-})
-```
+- ヘッダの `alg` で分岐し、`HS256` は共有シークレット、`ES256` / `RS256` は JWKS（`kid` で鍵を選択）で検証する
+- `aud: 'authenticated'` と `iss: ${SUPABASE_URL}/auth/v1` を必ず検証する
+- 検証失敗は 401、JWKS の取得失敗はサーバー側の問題として 500 にする
+- 実装は `src/middleware/auth.ts` を参照
 
 ### Supabase Auth トリガー（必ずマイグレーションに含める）
 
@@ -331,6 +323,8 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8080/api/v1
 
 ```
 PORT=8080
+SUPABASE_URL=https://xxx.supabase.co
+# 任意: Legacy JWT Secret（HS256）で署名しているプロジェクトのみ
 SUPABASE_JWT_SECRET=<Supabase管理画面 > Settings > API > JWT Secret>
 DATABASE_URL=postgresql://postgres:[password]@db.xxx.supabase.co:5432/postgres
 R2_ACCOUNT_ID=<Cloudflare Account ID>

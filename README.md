@@ -96,7 +96,7 @@ API サーバーは動画バイナリを一切中継しません（メモリ・�
 - **`any` 型ゼロ** — `unknown` + 型ガードで代替。ESLint の `no-explicit-any` を error に設定
 - **起動時の環境変数バリデーション** — zod で検証し、欠落時は即座にプロセスを終了させて実行時の undefined 参照を防ぐ
 - **エラーハンドリングの集約** — 各ルートで try/catch を書かず、`app.onError` で `{ error: { code, message } }` に整形
-- **JWT の alg 固定** — `alg: 'HS256'` と `aud: 'authenticated'` を明示して alg 混同攻撃を防ぐ
+- **JWT の alg 固定** — JWT Signing Keys（ES256 / RS256）は JWKS を取得・キャッシュして検証し、Legacy JWT Secret（HS256）は設定時のみ受け付ける。許可した alg と鍵の種類を対応付け、`aud` / `iss` も検証して alg 混同攻撃を防ぐ
 - **RLS の有効化** — public スキーマの全テーブルで RLS を有効化し、anon キー経由の PostgREST 直アクセスを遮断（API サーバーは所有者ロールで接続）
 - **非公開バケット** — 動画・サムネイルとも公開 URL を持たず、都度発行する署名付き URL で配信
 - **カーソルベースページネーション** — オフセットではなくカーソルで、件数が増えても劣化しない一覧取得
@@ -146,7 +146,7 @@ sparlog/
 1. プロジェクトを作成する
 2. Authentication > Providers で Google と Email を有効化する
 3. Authentication > URL Configuration に `http://localhost:3000/auth/callback` を追加する
-4. Settings > API から `Project URL` / `anon key` / `JWT Secret` を控える
+4. Settings > API から `Project URL` / `anon key` を控える（Legacy JWT Secret で署名している旧プロジェクトのみ `JWT Secret` も）
 5. Settings > Database から接続文字列（Session mode・ポート 5432）を控える
 
 **Cloudflare R2**
@@ -190,7 +190,7 @@ npm run dev                       # http://localhost:3000
 
 | ファイル | 変数 |
 |---------|------|
-| `backend/.env` | `PORT` `DATABASE_URL` `SUPABASE_JWT_SECRET` `R2_ACCOUNT_ID` `R2_ACCESS_KEY_ID` `R2_SECRET_ACCESS_KEY` `R2_BUCKET_NAME` `R2_PUBLIC_DOMAIN` `CORS_ORIGINS` |
+| `backend/.env` | `PORT` `DATABASE_URL` `SUPABASE_URL` `SUPABASE_JWT_SECRET`（任意） `R2_ACCOUNT_ID` `R2_ACCESS_KEY_ID` `R2_SECRET_ACCESS_KEY` `R2_BUCKET_NAME` `R2_PUBLIC_DOMAIN` `CORS_ORIGINS` |
 | `frontend/.env.local` | `NEXT_PUBLIC_SUPABASE_URL` `NEXT_PUBLIC_SUPABASE_ANON_KEY` `NEXT_PUBLIC_API_BASE_URL` |
 
 詳細はそれぞれの `.env.example` / `.env.local.example` を参照。**secret はコミットしない。**
