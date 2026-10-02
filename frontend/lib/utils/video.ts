@@ -34,6 +34,19 @@ export function resolveVideoMimeType(file: File): AllowedVideoMimeType | null {
   return MIME_BY_EXTENSION[extension] ?? null
 }
 
+/**
+ * プレイヤーに渡す MIME タイプを決める。
+ * iPhone の .mov（video/quicktime）は Chrome の canPlayType では「再生不可」と判定されるが、
+ * コンテナは MP4 とほぼ同じで実際には再生できるため、ブラウザが対応を返さない型は video/mp4 として渡す。
+ */
+export function resolvePlaybackMimeType(mimeType: string | null): string {
+  if (!mimeType) return 'video/mp4'
+  if (typeof document === 'undefined') return mimeType
+
+  const canPlay = document.createElement('video').canPlayType(mimeType)
+  return canPlay === '' ? 'video/mp4' : mimeType
+}
+
 export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
 
 /** 拡張子を除いたファイル名（タイトルの初期値に使う） */
