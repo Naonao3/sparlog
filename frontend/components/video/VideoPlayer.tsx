@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react'
 import videojs from 'video.js'
 import 'video.js/dist/video-js.css'
+import { resolvePlaybackMimeType } from '@/lib/utils/video'
 import { usePlayerStore } from '@/stores/player'
 
 type Player = ReturnType<typeof videojs>
@@ -58,7 +59,7 @@ export function VideoPlayer({ src, mimeType, poster }: VideoPlayerProps) {
     const player = playerRef.current
     if (!player || src.length === 0) return
 
-    player.src({ src, type: mimeType ?? 'video/mp4' })
+    player.src({ src, type: resolvePlaybackMimeType(mimeType) })
     if (poster) player.poster(poster)
   }, [src, mimeType, poster])
 

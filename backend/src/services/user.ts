@@ -80,9 +80,7 @@ export async function deleteAccount(userId: string): Promise<void> {
   if (!existing) throw notFound('ユーザーが見つかりません')
 
   const videos = await videoRepository.listStorageKeysByUser(userId)
-  const keys = videos.flatMap((video) =>
-    video.thumbnailKey ? [video.storageKey, video.thumbnailKey] : [video.storageKey],
-  )
+  const keys = videos.flatMap(storageService.collectVideoObjectKeys)
 
   await storageService.deleteObjects(keys)
   await userRepository.remove(userId)

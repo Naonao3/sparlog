@@ -175,8 +175,7 @@ export async function updateVideo(
 export async function deleteVideo(userId: string, videoId: string): Promise<void> {
   const video = await findOwnVideoOrThrow(userId, videoId)
 
-  const keys = video.thumbnailKey ? [video.storageKey, video.thumbnailKey] : [video.storageKey]
-  await storageService.deleteObjects(keys)
+  await storageService.deleteObjects(storageService.collectVideoObjectKeys(video))
   await videoRepository.remove(videoId)
 }
 
@@ -216,7 +215,7 @@ export async function completeUpload(userId: string, videoId: string): Promise<V
 }
 
 /**
- * R2 から動画を取得し、メタデータ抽出とサムネイル生成を行う。
+ * R2 から動画を取得し、再生用動画への変換・メタデータ抽出・サムネイル生成を行う。
  * 失敗した場合は status を ERROR にして理由を残す（complete の再実行でリトライ可能）。
  */
 export async function processVideo(videoId: string): Promise<void> {
@@ -225,19 +224,34 @@ export async function processVideo(videoId: string): Promise<void> {
 
   const workDir = await mkdtemp(join(tmpdir(), `sparlog-${videoId}-`))
   const sourcePath = join(workDir, 'source')
+  const playbackPath = join(workDir, 'playback.mp4')
   const thumbnailPath = join(workDir, 'thumb.jpg')
 
   try {
     await storageService.downloadToFile(video.storageKey, sourcePath)
 
-    const metadata = await ffmpegService.probe(sourcePath)
-    await ffmpegService.generateThumbnail({
+    const sourceMetadata = await ffmpegService.probe(sourcePath)
+    await ffmpegService.transcodeForPlayback({
       sourcePath,
+      outputPath: playbackPath,
+      source: sourceMetadata,
+    })
+
+    // 長さ・解像度・サムネイルは変換後の動画から取る（回転と HDR の色変換が反映済みのため）
+    const metadata = await ffmpegService.probe(playbackPath)
+    await ffmpegService.generateThumbnail({
+      sourcePath: playbackPath,
       outputPath: thumbnailPath,
       durationSec: metadata.durationSec,
     })
 
+    const playbackKey = storageService.buildPlaybackKey(video.userId, video.id)
     const thumbnailKey = storageService.buildThumbnailKey(video.userId, video.id)
+    await storageService.uploadFile({
+      key: playbackKey,
+      filePath: playbackPath,
+      contentType: 'video/mp4',
+    })
     await storageService.uploadFile({
       key: thumbnailKey,
       filePath: thumbnailPath,
@@ -246,6 +260,7 @@ export async function processVideo(videoId: string): Promise<void> {
 
     await videoRepository.update(videoId, {
       status: 'READY',
+      playbackKey,
       thumbnailKey,
       durationSec: metadata.durationSec,
       width: metadata.width,
@@ -272,6 +287,13 @@ export async function getStreamUrl(userId: string, videoId: string): Promise<Str
     throw badRequest('この動画はまだ再生できません（処理中またはエラー）')
   }
 
-  const signed = await storageService.createDownloadUrl({ key: video.storageKey })
-  return { url: signed.url, expiresIn: signed.expiresIn }
+  // 再生用動画があればそちらを返す（変換前に登録された旧データは元ファイルを再生する）
+  const signed = await storageService.createDownloadUrl({
+    key: video.playbackKey ?? video.storageKey,
+  })
+  return {
+    url: signed.url,
+    expiresIn: signed.expiresIn,
+    mimeType: video.playbackKey ? 'video/mp4' : video.mimeType,
+  }
 }

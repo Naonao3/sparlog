@@ -74,7 +74,7 @@ export function VideoDetail({ videoId }: { videoId: string }) {
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-6">
           {isReady && stream ? (
-            <VideoPlayer src={stream.url} mimeType={video.mimeType} poster={video.thumbnailUrl} />
+            <VideoPlayer src={stream.url} mimeType={stream.mimeType} poster={video.thumbnailUrl} />
           ) : (
             <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-lg border bg-muted/30 text-center">
               {video.status === 'ERROR' ? (

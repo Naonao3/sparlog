@@ -73,6 +73,8 @@ export interface CreateVideoResponse {
 export interface StreamResponse {
   url: string
   expiresIn: number
+  /** 再生するファイルの MIME タイプ（再生用に変換済みなら video/mp4） */
+  mimeType: string | null
 }
 
 export interface CommentAuthor {
