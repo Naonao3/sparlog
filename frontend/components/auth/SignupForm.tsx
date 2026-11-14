@@ -1,6 +1,7 @@
 'use client'
 
 import { zodResolver } from '@hookform/resolvers/zod'
+import { signUp } from 'aws-amplify/auth'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
@@ -11,13 +12,13 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { createClient } from '@/lib/supabase/client'
+import { toAuthErrorMessage } from '@/lib/auth/errors'
 
 const signupSchema = z
   .object({
     displayName: z.string().trim().min(1, '表示名を入力してください').max(50),
     email: z.string().min(1, 'メールアドレスを入力してください').email('メールアドレスの形式が正しくありません'),
-    password: z.string().min(8, 'パスワードは8文字以上で入力してください').max(72),
+    password: z.string().min(8, 'パスワードは8文字以上で入力してください').max(256),
     confirmPassword: z.string().min(1, '確認用パスワードを入力してください'),
   })
   .refine((values) => values.password === values.confirmPassword, {
@@ -40,32 +41,27 @@ export function SignupForm() {
   })
 
   async function onSubmit(values: SignupFormValues): Promise<void> {
-    const supabase = createClient()
-    const { data, error } = await supabase.auth.signUp({
-      email: values.email,
-      password: values.password,
-      options: {
-        data: { full_name: values.displayName },
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-      },
-    })
+    try {
+      const { nextStep } = await signUp({
+        username: values.email,
+        password: values.password,
+        options: {
+          // name は ID トークンに入り、API が users.display_name の初期値に使う
+          userAttributes: { email: values.email, name: values.displayName },
+          // 確認コードの入力後にそのままログインさせる
+          autoSignIn: true,
+        },
+      })
 
-    if (error) {
-      toast.error('登録に失敗しました', { description: error.message })
-      return
+      if (nextStep.signUpStep === 'CONFIRM_SIGN_UP') {
+        toast.success('確認コードを送信しました', {
+          description: 'メールに届いた6桁のコードを入力してください。',
+        })
+      }
+      router.push(`/confirm-signup?email=${encodeURIComponent(values.email)}`)
+    } catch (error: unknown) {
+      toast.error('登録に失敗しました', { description: toAuthErrorMessage(error) })
     }
-
-    // メール確認が有効な場合、セッションは発行されない
-    if (data.session) {
-      router.push('/videos')
-      router.refresh()
-      return
-    }
-
-    toast.success('確認メールを送信しました', {
-      description: 'メール内のリンクを開いて登録を完了してください。',
-    })
-    router.push('/login')
   }
 
   return (

@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/client'
+import { fetchAuthSession } from 'aws-amplify/auth'
 import type { ApiErrorBody, ApiErrorCode } from '@/types'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8080/api/v1'
@@ -26,12 +26,17 @@ function isApiErrorBody(value: unknown): value is ApiErrorBody {
   return typeof code === 'string' && typeof message === 'string'
 }
 
-async function getAccessToken(): Promise<string | null> {
-  const supabase = createClient()
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
-  return session?.access_token ?? null
+/**
+ * API に送る Cognito の ID トークン（アクセストークンにはメールアドレスが入らないため ID トークンを使う）。
+ * 期限切れなら Amplify がリフレッシュトークンで自動更新する。
+ */
+async function getIdToken(): Promise<string | null> {
+  try {
+    const session = await fetchAuthSession()
+    return session.tokens?.idToken?.toString() ?? null
+  } catch {
+    return null
+  }
 }
 
 interface RequestOptions {
@@ -46,7 +51,7 @@ interface RequestOptions {
  * コンポーネントからは直接呼ばず、hooks/ のカスタムフック経由で使う。
  */
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const token = await getAccessToken()
+  const token = await getIdToken()
   const query = options.searchParams?.toString()
   const url = `${API_BASE_URL}${path}${query ? `?${query}` : ''}`
 
@@ -95,7 +100,7 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
 }
 
 /**
- * R2 の Presigned URL へ直接 PUT する（Hono サーバーを経由しない）。
+ * S3 の Presigned URL へ直接 PUT する（Hono サーバーを経由しない）。
  * 進捗を取りたいので fetch ではなく XMLHttpRequest を使う。
  */
 export function uploadToPresignedUrl(input: {

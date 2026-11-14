@@ -1,8 +1,6 @@
 'use client'
 
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useQueryClient } from '@tanstack/react-query'
-import { useRouter } from 'next/navigation'
 import { useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
@@ -24,8 +22,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
+import { useSignOut } from '@/hooks/useAuth'
 import { useDeleteAccount, useProfile, useUpdateProfile } from '@/hooks/useProfile'
-import { createClient } from '@/lib/supabase/client'
 import { formatDate } from '@/lib/utils/format'
 
 const profileSchema = z.object({
@@ -37,8 +35,7 @@ const profileSchema = z.object({
 type ProfileFormValues = z.infer<typeof profileSchema>
 
 export function ProfileForm() {
-  const router = useRouter()
-  const queryClient = useQueryClient()
+  const signOut = useSignOut()
 
   const { data: profile, isPending, isError } = useProfile()
   const updateProfile = useUpdateProfile()
@@ -91,12 +88,9 @@ export function ProfileForm() {
   async function handleDeleteAccount(): Promise<void> {
     try {
       await deleteAccount.mutateAsync()
-      const supabase = createClient()
-      await supabase.auth.signOut()
-      queryClient.clear()
       toast.success('アカウントを削除しました')
-      router.push('/login')
-      router.refresh()
+      // Cognito のユーザーは API 側で削除済み。ブラウザに残ったトークンを消す
+      await signOut()
     } catch (error: unknown) {
       toast.error('アカウントを削除できませんでした', {
         description: error instanceof Error ? error.message : undefined,
