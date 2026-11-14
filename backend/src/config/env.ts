@@ -1,6 +1,14 @@
 import { z } from 'zod'
 
 /**
+ * 任意の環境変数。ホスティングのダッシュボードで値を空のまま登録すると空文字が渡るため、
+ * 空文字は「未設定」として扱う。
+ */
+function optional<T extends z.ZodTypeAny>(schema: T) {
+  return z.preprocess((value) => (value === '' ? undefined : value), schema.optional())
+}
+
+/**
  * 環境変数は起動時に必ずここでバリデーションする。
  * 欠落・不正がある場合は即座にプロセスを終了させ、実行時の undefined 参照を防ぐ。
  */
@@ -22,19 +30,19 @@ const envSchema = z.object({
    * Legacy JWT Secret（HS256）。旧方式の共有シークレットで署名しているプロジェクトのみ設定する。
    * 未設定の場合、HS256 のトークンは拒否する。
    */
-  SUPABASE_JWT_SECRET: z.string().min(1).optional(),
+  SUPABASE_JWT_SECRET: optional(z.string().min(1)),
 
   /**
    * アカウント削除時に auth.users も消すために使う（任意）。
    * 未設定の場合はアプリ側のデータのみ削除する。
    */
-  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
+  SUPABASE_SERVICE_ROLE_KEY: optional(z.string().min(1)),
 
   R2_ACCOUNT_ID: z.string().min(1),
   R2_ACCESS_KEY_ID: z.string().min(1),
   R2_SECRET_ACCESS_KEY: z.string().min(1),
   R2_BUCKET_NAME: z.string().min(1),
-  R2_PUBLIC_DOMAIN: z.string().url().optional(),
+  R2_PUBLIC_DOMAIN: optional(z.string().url()),
 
   /** 動画アップロード用 Presigned URL の有効期限（秒） */
   UPLOAD_URL_EXPIRES_IN: z.coerce.number().int().positive().default(60 * 15),

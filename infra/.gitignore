@@ -1,0 +1,3 @@
+cdk.out/
+# CloudFront 署名用の秘密鍵は絶対にコミットしない（公開鍵のみ追跡する）
+keys/*-private.pem
