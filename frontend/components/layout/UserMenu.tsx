@@ -2,8 +2,6 @@
 
 import { LogOut, Settings, User } from 'lucide-react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { useQueryClient } from '@tanstack/react-query'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -14,23 +12,18 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { useSignOut } from '@/hooks/useAuth'
 import { useProfile } from '@/hooks/useProfile'
-import { createClient } from '@/lib/supabase/client'
 
 export function UserMenu({ email }: { email: string }) {
-  const router = useRouter()
-  const queryClient = useQueryClient()
+  const signOut = useSignOut()
   const { data: profile } = useProfile()
 
   const displayName = profile?.displayName ?? email.split('@')[0]
   const initial = (displayName ?? 'U').slice(0, 1).toUpperCase()
 
   async function handleSignOut(): Promise<void> {
-    const supabase = createClient()
-    await supabase.auth.signOut()
-    queryClient.clear()
-    router.push('/login')
-    router.refresh()
+    await signOut()
   }
 
   return (

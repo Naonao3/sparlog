@@ -1,26 +1,26 @@
 'use client'
 
+import { signInWithRedirect } from 'aws-amplify/auth'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { createClient } from '@/lib/supabase/client'
+import { toAuthErrorMessage } from '@/lib/auth/errors'
+import { saveRedirectPath } from '@/lib/auth/redirect'
 
 export function GoogleSignInButton({ redirectTo }: { redirectTo?: string }) {
   const [isLoading, setIsLoading] = useState(false)
 
   async function handleClick(): Promise<void> {
     setIsLoading(true)
-    const supabase = createClient()
-    const callbackUrl = new URL('/auth/callback', window.location.origin)
-    if (redirectTo) callbackUrl.searchParams.set('next', redirectTo)
+    // Cognito → Google → /auth/callback とページごと遷移するので、戻り先を保存しておく
+    saveRedirectPath(redirectTo ?? '/videos')
 
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: callbackUrl.toString() },
-    })
-
-    if (error) {
-      toast.error('Googleログインを開始できませんでした', { description: error.message })
+    try {
+      await signInWithRedirect({ provider: 'Google' })
+    } catch (error: unknown) {
+      toast.error('Googleログインを開始できませんでした', {
+        description: toAuthErrorMessage(error),
+      })
       setIsLoading(false)
     }
   }
