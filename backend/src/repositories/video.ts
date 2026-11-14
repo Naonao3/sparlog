@@ -112,7 +112,7 @@ export async function replaceTags(videoId: string, tagIds: string[]): Promise<Vi
   })
 }
 
-/** ユーザーが所有する動画の R2 オブジェクトキーを列挙する（アカウント削除時のR2掃除用） */
+/** ユーザーが所有する動画の S3 オブジェクトキーを列挙する（アカウント削除時のS3 掃除用） */
 export async function listStorageKeysByUser(
   userId: string,
 ): Promise<{ storageKey: string; playbackKey: string | null; thumbnailKey: string | null }[]> {

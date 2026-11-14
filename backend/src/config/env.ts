@@ -1,16 +1,22 @@
 import { z } from 'zod'
 
 /**
- * 任意の環境変数。ホスティングのダッシュボードで値を空のまま登録すると空文字が渡るため、
- * 空文字は「未設定」として扱う。
+ * PEM 形式の鍵。.env では改行を書けないことがあるため、`\n` のエスケープも受け付ける。
+ * （ECS では Secrets Manager の値が改行込みでそのまま渡る）
  */
-function optional<T extends z.ZodTypeAny>(schema: T) {
-  return z.preprocess((value) => (value === '' ? undefined : value), schema.optional())
-}
+const pemSchema = z
+  .string()
+  .transform((value) => value.replaceAll('\\n', '\n').trim())
+  .refine((value) => /^-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(value), {
+    message: 'PEM 形式の秘密鍵を指定してください',
+  })
 
 /**
  * 環境変数は起動時に必ずここでバリデーションする。
  * 欠落・不正がある場合は即座にプロセスを終了させ、実行時の undefined 参照を防ぐ。
+ *
+ * AWS の認証情報（アクセスキー）はここでは扱わない。SDK の既定の解決順
+ * （ECS ではタスクロール、ローカルでは AWS_PROFILE 等）に任せる。
  */
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -18,35 +24,31 @@ const envSchema = z.object({
 
   DATABASE_URL: z.string().url(),
 
-  /**
-   * JWT の issuer 検証と JWKS（ES256 / RS256 の公開鍵）の取得に使う。
-   * 末尾のスラッシュは取り除いて保持する。
-   */
-  SUPABASE_URL: z
+  AWS_REGION: z.string().min(1).default('ap-northeast-1'),
+
+  /** Cognito ユーザープールID（例: ap-northeast-1_AbCdEfGhI）。JWT の iss と JWKS の取得に使う */
+  COGNITO_USER_POOL_ID: z.string().regex(/^[a-z]{2}-[a-z]+-\d_[A-Za-z0-9]+$/, {
+    message: 'Cognito のユーザープールID（<region>_<id>）を指定してください',
+  }),
+  /** Cognito アプリクライアントID。ID トークンの aud と照合する */
+  COGNITO_CLIENT_ID: z.string().min(1),
+
+  /** 動画・サムネイルを置く S3 バケット */
+  S3_BUCKET_NAME: z.string().min(1),
+
+  /** 再生・サムネイル配信用 CloudFront のドメイン（例: dxxxx.cloudfront.net） */
+  CLOUDFRONT_DOMAIN: z
     .string()
-    .url()
-    .transform((value) => value.replace(/\/+$/, '')),
-  /**
-   * Legacy JWT Secret（HS256）。旧方式の共有シークレットで署名しているプロジェクトのみ設定する。
-   * 未設定の場合、HS256 のトークンは拒否する。
-   */
-  SUPABASE_JWT_SECRET: optional(z.string().min(1)),
-
-  /**
-   * アカウント削除時に auth.users も消すために使う（任意）。
-   * 未設定の場合はアプリ側のデータのみ削除する。
-   */
-  SUPABASE_SERVICE_ROLE_KEY: optional(z.string().min(1)),
-
-  R2_ACCOUNT_ID: z.string().min(1),
-  R2_ACCESS_KEY_ID: z.string().min(1),
-  R2_SECRET_ACCESS_KEY: z.string().min(1),
-  R2_BUCKET_NAME: z.string().min(1),
-  R2_PUBLIC_DOMAIN: optional(z.string().url()),
+    .min(1)
+    .transform((value) => value.replace(/^https?:\/\//, '').replace(/\/+$/, '')),
+  /** CloudFront に登録した公開鍵のID（CDK の Outputs: CloudFrontKeyPairId） */
+  CLOUDFRONT_KEY_PAIR_ID: z.string().min(1),
+  /** 署名付きURL用の秘密鍵（Secrets Manager: sparlog/<env>/cloudfront-private-key） */
+  CLOUDFRONT_PRIVATE_KEY: pemSchema,
 
   /** 動画アップロード用 Presigned URL の有効期限（秒） */
   UPLOAD_URL_EXPIRES_IN: z.coerce.number().int().positive().default(60 * 15),
-  /** 再生用 Presigned URL の有効期限（秒） */
+  /** 再生用署名付き URL の有効期限（秒） */
   PLAYBACK_URL_EXPIRES_IN: z.coerce.number().int().positive().default(60 * 60),
   /** 1ファイルあたりの最大アップロードサイズ（バイト） */
   MAX_UPLOAD_BYTES: z.coerce
@@ -85,3 +87,6 @@ function loadEnv(): Env {
 
 export const env = loadEnv()
 export const isProduction = env.NODE_ENV === 'production'
+
+/** Cognito が発行する JWT の iss（JWKS もこの配下にある） */
+export const cognitoIssuer = `https://cognito-idp.${env.COGNITO_USER_POOL_ID.split('_')[0]}.amazonaws.com/${env.COGNITO_USER_POOL_ID}`

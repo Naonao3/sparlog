@@ -1,49 +1,34 @@
 import { createMiddleware } from 'hono/factory'
-import { verify, verifyWithJwks } from 'hono/jwt'
+import { verifyWithJwks } from 'hono/jwt'
 import type { VerifyOptions } from 'hono/utils/jwt/jwt'
 import { decodeHeader } from 'hono/utils/jwt/jwt'
-import { env } from '../config/env.js'
-import { getSigningKeys } from '../lib/jwks.js'
+import { cognitoIssuer, env } from '../config/env.js'
+import { parseCognitoIdToken } from '../lib/cognitoClaims.js'
 import { unauthorized } from '../lib/errors.js'
+import { getSigningKeys } from '../lib/jwks.js'
+import * as userService from '../services/user.js'
 import type { AppEnv } from '../types/index.js'
 
-/** Supabase が発行する JWT のうち、本アプリが利用するクレームだけを型で表現する */
-interface SupabaseJwtPayload {
-  sub: string
-  email?: string
-  aud?: string | string[]
-  exp?: number
-  role?: string
-}
-
-function isSupabaseJwtPayload(value: unknown): value is SupabaseJwtPayload {
-  if (typeof value !== 'object' || value === null) return false
-  const sub = (value as Record<string, unknown>).sub
-  return typeof sub === 'string' && sub.length > 0
-}
-
-/** 非対称鍵で署名されたトークンとして受け入れるアルゴリズム（Supabase の JWT Signing Keys） */
-const ASYMMETRIC_ALGORITHMS = ['ES256', 'RS256'] as const
+/** Cognito は RS256 で署名する。ヘッダの alg はこれ以外を受け付けない（alg 混同攻撃対策） */
+const ALLOWED_ALGORITHMS = ['RS256'] as const
 
 /**
- * exp / nbf は hono/jwt が検証する。aud と iss はここで固定する。
- * iat は許容誤差なしで「未来でないこと」を検証されるため、Supabase とこのサーバーの時計が
+ * exp / nbf は hono/jwt が検証する。iss と aud（ID トークンではアプリクライアントID）はここで固定する。
+ * iat は許容誤差なしで「未来でないこと」を検証されるため、発行元とこのサーバーの時計が
  * 数秒ずれているだけでログイン直後のトークンが弾かれる。有効期限は exp で担保されるので無効にする。
  */
 const verification: VerifyOptions = {
-  aud: 'authenticated',
-  iss: `${env.SUPABASE_URL}/auth/v1`,
+  iss: cognitoIssuer,
+  aud: env.COGNITO_CLIENT_ID,
   iat: false,
 }
 
-function readHeader(token: string): { alg: string; kid?: string } {
+function readKid(token: string): string {
   try {
     const header: unknown = decodeHeader(token)
     if (typeof header === 'object' && header !== null) {
-      const { alg, kid } = header as Record<string, unknown>
-      if (typeof alg === 'string') {
-        return { alg, kid: typeof kid === 'string' ? kid : undefined }
-      }
+      const { kid } = header as Record<string, unknown>
+      if (typeof kid === 'string' && kid.length > 0) return kid
     }
   } catch {
     // 下で unauthorized を投げる
@@ -52,31 +37,15 @@ function readHeader(token: string): { alg: string; kid?: string } {
 }
 
 /** クライアントには理由を返さず、原因調査のためにサーバーログにだけ残す（トークン本体は出さない） */
-function logVerifyFailure(error: unknown, token: string): void {
-  const reason = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+function logVerifyFailure(reason: unknown, token: string): void {
+  const message = reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason)
   // hono/jwt のエラーメッセージにはトークン本体が含まれる場合があるため伏せる
-  console.warn(`[auth] JWT の検証に失敗しました - ${reason.replaceAll(token, '<token>')}`)
+  console.warn(`[auth] JWT の検証に失敗しました - ${message.replaceAll(token, '<token>')}`)
 }
 
-async function verifyToken(token: string): Promise<unknown> {
-  const { alg, kid } = readHeader(token)
-
-  // alg はヘッダの値をそのまま信用せず、許可したものだけを鍵の種類と対応付けて検証する（alg 混同攻撃対策）
-  if (alg === 'HS256') {
-    if (!env.SUPABASE_JWT_SECRET) {
-      throw unauthorized('HS256 のトークンは受け付けていません')
-    }
-    try {
-      return await verify(token, env.SUPABASE_JWT_SECRET, { alg: 'HS256', ...verification })
-    } catch (error) {
-      logVerifyFailure(error, token)
-      throw unauthorized('トークンが無効または期限切れです')
-    }
-  }
-
-  if (!kid) {
-    throw unauthorized('トークンの形式が不正です')
-  }
+/** 署名・exp・iss・aud を検証してペイロードを返す（テストのため export） */
+export async function verifyToken(token: string): Promise<unknown> {
+  const kid = readKid(token)
 
   // JWKS の取得失敗はクライアントの問題ではないため、401 にせずエラーハンドラ（500）に任せる
   const keys = await getSigningKeys(kid)
@@ -84,7 +53,7 @@ async function verifyToken(token: string): Promise<unknown> {
   try {
     return await verifyWithJwks(token, {
       keys,
-      allowedAlgorithms: ASYMMETRIC_ALGORITHMS,
+      allowedAlgorithms: ALLOWED_ALGORITHMS,
       verification,
     })
   } catch (error) {
@@ -94,8 +63,9 @@ async function verifyToken(token: string): Promise<unknown> {
 }
 
 /**
- * Supabase Auth が発行した JWT の署名を検証し、userId をコンテキストに載せる。
- * このサーバーは認証そのものを行わない（サインイン等はすべて Supabase Auth に委譲）。
+ * Cognito が発行した ID トークンの署名を検証し、ユーザー情報をコンテキストに載せる。
+ * このサーバーは認証そのものを行わない（サインイン等はすべて Cognito に委譲）。
+ * 初めて見るユーザーはここで users 行を作成する。
  */
 export const authMiddleware = createMiddleware<AppEnv>(async (c, next) => {
   const header = c.req.header('Authorization')
@@ -109,12 +79,16 @@ export const authMiddleware = createMiddleware<AppEnv>(async (c, next) => {
   }
 
   const payload = await verifyToken(token)
-  if (!isSupabaseJwtPayload(payload)) {
+  const parsed = parseCognitoIdToken(payload)
+  if (!parsed.ok) {
+    logVerifyFailure(parsed.reason, token)
     throw unauthorized('トークンのペイロードが不正です')
   }
 
-  c.set('userId', payload.sub)
-  c.set('userEmail', payload.email ?? null)
+  await userService.ensureUser(parsed.identity)
+
+  c.set('userId', parsed.identity.userId)
+  c.set('identity', parsed.identity)
 
   await next()
 })

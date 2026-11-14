@@ -19,8 +19,8 @@ enum Visibility {
   PUBLIC
 }
 
-/// アプリユーザー。id は Supabase Auth の auth.users.id と一致する。
-/// レコードは auth.users への INSERT トリガー（migrations 内の手動SQL）で自動作成される。
+/// アプリユーザー。id は Cognito ユーザーの sub と一致する。
+/// レコードは API の認証ミドルウェアが初回リクエスト時に作成する（services/user.ts の ensureUser）。
 model User {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email        String   @unique

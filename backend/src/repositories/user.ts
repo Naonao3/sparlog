@@ -10,20 +10,21 @@ export async function findByEmail(email: string): Promise<User | null> {
 }
 
 /**
- * Supabase Auth のトリガーで users 行が作られる前にAPIが呼ばれた場合の保険。
- * id は auth.users.id と一致させる。
+ * Cognito のユーザーに対応する users 行を作る。既にあれば何もしない。
+ * 初回ログイン直後に複数のリクエストが同時に来ても重複しないよう upsert にする。
+ * id は Cognito の sub と一致させる。
  */
-export async function createFromAuth(input: {
+export async function createIfAbsent(input: {
   id: string
   email: string
   authProvider: string
+  displayName: string | null
+  avatarUrl: string | null
 }): Promise<User> {
-  return prisma.user.create({
-    data: {
-      id: input.id,
-      email: input.email,
-      authProvider: input.authProvider,
-    },
+  return prisma.user.upsert({
+    where: { id: input.id },
+    create: input,
+    update: {},
   })
 }
 

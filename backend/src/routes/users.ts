@@ -6,7 +6,7 @@ import { updateUserSchema, type AppEnv } from '../types/index.js'
 export const usersRoute = new Hono<AppEnv>()
 
 usersRoute.get('/me', async (c) => {
-  const profile = await userService.getProfile(c.get('userId'), c.get('userEmail'))
+  const profile = await userService.getProfile(c.get('userId'))
   return c.json(profile)
 })
 
@@ -16,6 +16,6 @@ usersRoute.patch('/me', validate('json', updateUserSchema), async (c) => {
 })
 
 usersRoute.delete('/me', async (c) => {
-  await userService.deleteAccount(c.get('userId'))
+  await userService.deleteAccount(c.get('identity'))
   return c.body(null, 204)
 })
