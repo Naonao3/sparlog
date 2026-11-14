@@ -20,11 +20,11 @@ import type {
 
 const THUMBNAIL_URL_EXPIRES_IN = 60 * 60
 
-/** DTO 変換。サムネイルは都度 Presigned URL を発行する（バケットは非公開） */
-async function toVideoResponse(video: VideoWithRelations): Promise<VideoResponse> {
+/** DTO 変換。サムネイルは都度 CloudFront の署名付き URL を発行する（バケットは非公開） */
+function toVideoResponse(video: VideoWithRelations): VideoResponse {
   let thumbnailUrl: string | null = null
   if (video.thumbnailKey) {
-    const signed = await storageService.createDownloadUrl({
+    const signed = storageService.createDownloadUrl({
       key: video.thumbnailKey,
       expiresIn: THUMBNAIL_URL_EXPIRES_IN,
     })
@@ -92,7 +92,7 @@ export async function listVideos(
   })
 
   return {
-    items: await Promise.all(items.map(toVideoResponse)),
+    items: items.map(toVideoResponse),
     nextCursor,
   }
 }
@@ -103,7 +103,7 @@ export async function getVideo(userId: string, videoId: string): Promise<VideoRe
 }
 
 /**
- * メタデータを DB に登録し、R2 への直接アップロード用 Presigned URL を返す。
+ * メタデータを DB に登録し、S3 への直接アップロード用 Presigned URL を返す。
  * この時点では動画本体はまだ存在しないため status は UPLOADING。
  */
 export async function createVideo(
@@ -143,7 +143,7 @@ export async function createVideo(
   })
 
   return {
-    video: await toVideoResponse(video),
+    video: toVideoResponse(video),
     upload: {
       url: upload.url,
       method: 'PUT',
@@ -215,7 +215,7 @@ export async function completeUpload(userId: string, videoId: string): Promise<V
 }
 
 /**
- * R2 から動画を取得し、再生用動画への変換・メタデータ抽出・サムネイル生成を行う。
+ * S3 から動画を取得し、再生用動画への変換・メタデータ抽出・サムネイル生成を行う。
  * 失敗した場合は status を ERROR にして理由を残す（complete の再実行でリトライ可能）。
  */
 export async function processVideo(videoId: string): Promise<void> {
@@ -288,7 +288,7 @@ export async function getStreamUrl(userId: string, videoId: string): Promise<Str
   }
 
   // 再生用動画があればそちらを返す（変換前に登録された旧データは元ファイルを再生する）
-  const signed = await storageService.createDownloadUrl({
+  const signed = storageService.createDownloadUrl({
     key: video.playbackKey ?? video.storageKey,
   })
   return {

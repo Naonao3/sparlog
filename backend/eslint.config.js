@@ -27,6 +27,11 @@ export default tseslint.config(
     },
   },
   {
+    // node:test の describe / it は Promise を返すが、ランナーが待つので await 不要
+    files: ['test/**/*.ts'],
+    rules: { '@typescript-eslint/no-floating-promises': 'off' },
+  },
+  {
     files: ['prisma/seed.ts', 'eslint.config.js'],
     ...tseslint.configs.disableTypeChecked,
   },

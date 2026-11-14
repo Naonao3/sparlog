@@ -1,14 +1,15 @@
 import { z } from 'zod'
+import type { AuthIdentity } from '../lib/cognitoClaims.js'
 
 /* ------------------------------------------------------------------ */
 /* 共通                                                                */
 /* ------------------------------------------------------------------ */
 
-/** Hono の Context に載せる値。authMiddleware 通過後は userId が必ず入る。 */
+/** Hono の Context に載せる値。authMiddleware 通過後は必ず入る。 */
 export type AppEnv = {
   Variables: {
     userId: string
-    userEmail: string | null
+    identity: AuthIdentity
   }
 }
 

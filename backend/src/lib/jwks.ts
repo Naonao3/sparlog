@@ -1,12 +1,12 @@
 import type { HonoJsonWebKey } from 'hono/utils/jwt/jws'
-import { env } from '../config/env.js'
+import { cognitoIssuer } from '../config/env.js'
 
 /**
- * Supabase Auth の署名鍵（JWKS）をメモリにキャッシュする。
- * リクエストごとに取得するとレイテンシと Supabase 側の負荷が増えるため、
+ * Cognito ユーザープールの署名鍵（JWKS）をメモリにキャッシュする。
+ * リクエストごとに取得するとレイテンシが増えるため、
  * TTL 切れか、未知の kid（鍵ローテーション直後）を受け取ったときだけ取り直す。
  */
-const JWKS_URL = `${env.SUPABASE_URL}/auth/v1/.well-known/jwks.json`
+const JWKS_URL = `${cognitoIssuer}/.well-known/jwks.json`
 const CACHE_TTL_MS = 10 * 60 * 1000
 /** 不正な kid を大量に送られても JWKS を叩き続けないための下限間隔 */
 const MIN_REFRESH_INTERVAL_MS = 30 * 1000
@@ -64,7 +64,7 @@ export async function getSigningKeys(kid: string): Promise<HonoJsonWebKey[]> {
     try {
       return await refreshKeys()
     } catch (error) {
-      // 鍵を持っていれば、Supabase の一時的な障害で全リクエストを落とさないよう古い鍵で続行する
+      // 鍵を持っていれば、一時的な障害で全リクエストを落とさないよう古い鍵で続行する
       console.error('[jwks] 鍵の再取得に失敗したためキャッシュを使用します', error)
       return cachedKeys
     }

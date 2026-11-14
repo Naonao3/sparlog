@@ -9,20 +9,24 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import { getSignedUrl as getCloudFrontSignedUrl } from '@aws-sdk/cloudfront-signer'
+import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner'
 import { env } from '../config/env.js'
 import { internalError } from '../lib/errors.js'
 
+/**
+ * 認証情報は SDK の既定の解決順（ECS ではタスクロール、ローカルでは AWS_PROFILE 等）を使う。
+ *
+ * SDK 既定のチェックサム計算を有効にしたままだと、Presigned PUT URL に
+ * x-amz-checksum-* が含まれ、ブラウザからの直接アップロードが署名不一致で失敗するため必要時のみにする。
+ */
 const client = new S3Client({
-  region: 'auto',
-  endpoint: `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-  credentials: {
-    accessKeyId: env.R2_ACCESS_KEY_ID,
-    secretAccessKey: env.R2_SECRET_ACCESS_KEY,
-  },
+  region: env.AWS_REGION,
+  requestChecksumCalculation: 'WHEN_REQUIRED',
+  responseChecksumValidation: 'WHEN_REQUIRED',
 })
 
-const BUCKET = env.R2_BUCKET_NAME
+const BUCKET = env.S3_BUCKET_NAME
 
 const EXTENSION_BY_MIME: Record<string, string> = {
   'video/mp4': '.mp4',
@@ -33,7 +37,7 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   'video/mpeg': '.mpeg',
 }
 
-/** R2 上の動画オブジェクトキー。ユーザーIDと動画IDで名前空間を分ける。 */
+/** S3 上の動画オブジェクトキー。ユーザーIDと動画IDで名前空間を分ける。 */
 export function buildVideoKey(userId: string, videoId: string, fileName: string, mimeType: string): string {
   const ext = extname(fileName).toLowerCase() || EXTENSION_BY_MIME[mimeType] || '.mp4'
   return `videos/${userId}/${videoId}/original${ext}`
@@ -47,7 +51,7 @@ export function buildPlaybackKey(userId: string, videoId: string): string {
   return `videos/${userId}/${videoId}/playback.mp4`
 }
 
-/** 動画に紐づく R2 オブジェクトのキーをすべて返す（削除用） */
+/** 動画に紐づく S3 オブジェクトのキーをすべて返す（削除用） */
 export function collectVideoObjectKeys(video: {
   storageKey: string
   playbackKey: string | null
@@ -58,7 +62,7 @@ export function collectVideoObjectKeys(video: {
   )
 }
 
-/** アップロード用 Presigned URL（PUT）を発行する */
+/** アップロード用 Presigned URL（S3 への PUT）を発行する */
 export async function createUploadUrl(input: {
   key: string
   contentType: string
@@ -70,35 +74,40 @@ export async function createUploadUrl(input: {
     Key: input.key,
     ContentType: input.contentType,
   })
-  const url = await getSignedUrl(client, command, { expiresIn })
+  const url = await getS3SignedUrl(client, command, { expiresIn })
   return { url, expiresIn }
 }
 
-/** 再生・サムネイル取得用 Presigned URL（GET）を発行する */
-export async function createDownloadUrl(input: {
+/** オブジェクトキーを URL のパスにする（区切りの / は残し、各セグメントをエンコードする） */
+function toUrlPath(key: string): string {
+  return key.split('/').map(encodeURIComponent).join('/')
+}
+
+/**
+ * 再生・サムネイル取得用の署名付き URL を発行する。
+ * バケットは非公開のまま、CloudFront（署名付きURLのみ許可）経由で配信する。
+ */
+export function createDownloadUrl(input: {
   key: string
   expiresIn?: number
-  downloadFileName?: string
-}): Promise<{ url: string; expiresIn: number }> {
+}): { url: string; expiresIn: number } {
   const expiresIn = input.expiresIn ?? env.PLAYBACK_URL_EXPIRES_IN
-  const command = new GetObjectCommand({
-    Bucket: BUCKET,
-    Key: input.key,
-    ...(input.downloadFileName
-      ? { ResponseContentDisposition: `attachment; filename="${input.downloadFileName}"` }
-      : {}),
+  const url = getCloudFrontSignedUrl({
+    url: `https://${env.CLOUDFRONT_DOMAIN}/${toUrlPath(input.key)}`,
+    keyPairId: env.CLOUDFRONT_KEY_PAIR_ID,
+    privateKey: env.CLOUDFRONT_PRIVATE_KEY,
+    dateLessThan: new Date(Date.now() + expiresIn * 1000).toISOString(),
   })
-  const url = await getSignedUrl(client, command, { expiresIn })
   return { url, expiresIn }
 }
 
-/** R2 のオブジェクトをローカルへダウンロードする（ffmpeg 処理用） */
+/** S3 のオブジェクトをローカルへダウンロードする（ffmpeg 処理用） */
 export async function downloadToFile(key: string, destPath: string): Promise<void> {
   const result = await client.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }))
   const body = result.Body
 
   if (!(body instanceof Readable)) {
-    throw internalError('R2 からのレスポンスボディを読み取れませんでした')
+    throw internalError('S3 からのレスポンスボディを読み取れませんでした')
   }
 
   await pipeline(body, createWriteStream(destPath))

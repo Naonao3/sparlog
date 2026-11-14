@@ -1,8 +1,9 @@
 import type { User } from '@prisma/client'
-import { env } from '../config/env.js'
-import { notFound } from '../lib/errors.js'
+import type { AuthIdentity } from '../lib/cognitoClaims.js'
+import { conflict, notFound } from '../lib/errors.js'
 import * as userRepository from '../repositories/user.js'
 import * as videoRepository from '../repositories/video.js'
+import * as cognitoService from './cognito.js'
 import * as storageService from './storage.js'
 import type { UpdateUserInput, UserResponse } from '../types/index.js'
 
@@ -20,22 +21,63 @@ export function toUserResponse(user: User): UserResponse {
 }
 
 /**
- * プロフィール取得。
- * 通常は auth.users のトリガーで行が作られているが、トリガー未適用や
- * 移行直後のケースに備えて JWT の情報から補完的に作成する。
+ * users 行の存在を確認済みのユーザー（sub → email）。
+ * リクエストごとに DB を引かないためのプロセス内キャッシュで、上限を超えたら古いものから捨てる。
  */
-export async function getProfile(userId: string, email: string | null): Promise<UserResponse> {
-  const existing = await userRepository.findById(userId)
-  if (existing) return toUserResponse(existing)
+const knownUsers = new Map<string, string>()
+const KNOWN_USERS_LIMIT = 10_000
 
-  if (!email) throw notFound('ユーザーが見つかりません')
+function remember(userId: string, email: string): void {
+  knownUsers.delete(userId)
+  knownUsers.set(userId, email)
+  if (knownUsers.size > KNOWN_USERS_LIMIT) {
+    const oldest = knownUsers.keys().next()
+    if (!oldest.done) knownUsers.delete(oldest.value)
+  }
+}
 
-  const created = await userRepository.createFromAuth({
-    id: userId,
-    email,
-    authProvider: 'email',
-  })
-  return toUserResponse(created)
+/** 別の sub が同じメールアドレスで登録済みなら 409 にする */
+async function assertEmailAvailable(userId: string, email: string): Promise<void> {
+  const owner = await userRepository.findByEmail(email)
+  if (owner && owner.id !== userId) {
+    // Cognito ではメール＋パスワードと Google が同じアドレスでも別ユーザーになるため起こりうる
+    throw conflict(
+      'このメールアドレスは別のログイン方法で登録されています。最初に登録した方法でログインしてください',
+    )
+  }
+}
+
+/**
+ * Cognito のユーザーに対応する users 行を用意する（authMiddleware から呼ぶ）。
+ * - 初回: 行を作成する（表示名は Google の name、なければメールアドレスの @ より前）
+ * - Cognito 側でメールアドレスが変わっていたら追従する
+ */
+export async function ensureUser(identity: AuthIdentity): Promise<void> {
+  if (knownUsers.get(identity.userId) === identity.email) return
+
+  const existing = await userRepository.findById(identity.userId)
+
+  if (!existing) {
+    await assertEmailAvailable(identity.userId, identity.email)
+    await userRepository.createIfAbsent({
+      id: identity.userId,
+      email: identity.email,
+      authProvider: identity.authProvider,
+      displayName: identity.name ?? identity.email.split('@')[0] ?? null,
+      avatarUrl: identity.picture,
+    })
+  } else if (existing.email !== identity.email) {
+    await assertEmailAvailable(identity.userId, identity.email)
+    await userRepository.update(identity.userId, { email: identity.email })
+  }
+
+  remember(identity.userId, identity.email)
+}
+
+export async function getProfile(userId: string): Promise<UserResponse> {
+  const user = await userRepository.findById(userId)
+  if (!user) throw notFound('ユーザーが見つかりません')
+  return toUserResponse(user)
 }
 
 export async function updateProfile(
@@ -54,35 +96,21 @@ export async function updateProfile(
   return toUserResponse(updated)
 }
 
-/** Supabase Admin API で auth.users を削除する（設定されている場合のみ） */
-async function deleteAuthUser(userId: string): Promise<void> {
-  if (!env.SUPABASE_SERVICE_ROLE_KEY) return
-
-  const response = await fetch(`${env.SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
-    method: 'DELETE',
-    headers: {
-      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-    },
-  })
-
-  if (!response.ok && response.status !== 404) {
-    console.error(`[user] auth.users の削除に失敗しました: ${response.status}`)
-  }
-}
-
 /**
- * アカウント削除。R2 のオブジェクトを消してから DB 行を削除する
+ * アカウント削除。S3 のオブジェクト → DB 行 → Cognito ユーザーの順に消す
  * （動画・コメント・タグは onDelete: Cascade で連鎖削除される）。
+ * Cognito の削除に失敗した場合は 500 になるが、再試行すると authMiddleware が空の users 行を
+ * 作り直してから削除し直すので、最終的に全部消える。
  */
-export async function deleteAccount(userId: string): Promise<void> {
-  const existing = await userRepository.findById(userId)
+export async function deleteAccount(identity: AuthIdentity): Promise<void> {
+  const existing = await userRepository.findById(identity.userId)
   if (!existing) throw notFound('ユーザーが見つかりません')
 
-  const videos = await videoRepository.listStorageKeysByUser(userId)
+  const videos = await videoRepository.listStorageKeysByUser(identity.userId)
   const keys = videos.flatMap(storageService.collectVideoObjectKeys)
 
   await storageService.deleteObjects(keys)
-  await userRepository.remove(userId)
-  await deleteAuthUser(userId)
+  await userRepository.remove(identity.userId)
+  knownUsers.delete(identity.userId)
+  await cognitoService.deleteUser(identity.username)
 }
